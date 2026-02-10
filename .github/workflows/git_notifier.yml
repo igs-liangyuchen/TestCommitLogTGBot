@@ -1,9 +1,9 @@
-name: Git AI Notifier (Final Fix)
+name: Git AI Notifier (Stable Final)
 
 on:
   push:
     branches:
-      - main  # 如果是 master 請手動修改
+      - main
 
 jobs:
   notify:
@@ -14,46 +14,61 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: AI and Telegram Notification
+      - name: Run Script
         env:
           GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python3 -c "
-          import json, os, urllib.request, urllib.parse, subprocess
+          import json, os, urllib.request, urllib.parse, subprocess, sys, html
 
-          # 1. 取得 Git 資訊
-          try:
-              log = subprocess.check_output(['git', 'log', '-1', '--pretty=format:%s']).decode('utf-8')
-              diff = subprocess.check_output(['git', 'diff', 'HEAD^', 'HEAD', '--stat']).decode('utf-8')
-          except:
-              log = '無提交訊息'
-              diff = ''
+          def run_task():
+              # 1. 取得 Git 資訊
+              try:
+                  log = subprocess.check_output(['git', 'log', '-1', '--pretty=format:%s']).decode('utf-8')
+              except:
+                  log = '無提交訊息'
 
-          # 2. 呼叫 Gemini API (修正為 v1beta 穩定路徑)
-          api_key = os.getenv('GEMINI_KEY')
-          url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}'
-          prompt = f'你是一位開發秘書。請根據以下 Git 提交資訊用繁體中文寫一份簡短日報：\n提交內容：{log}\n更動統計：{diff}'
-          
-          data = {'contents': [{'parts': [{'text': prompt}]}]}
-          req = urllib.request.Request(url, data=json.dumps(data).encode(), headers={'Content-Type': 'application/json'})
-          
-          try:
-              with urllib.request.urlopen(req) as response:
-                  res = json.loads(response.read().decode())
-                  ai_msg = res['candidates'][0]['content']['parts'][0]['text']
-          except Exception as e:
-              # 如果失敗，嘗試抓取回傳的錯誤內容
-              error_body = e.read().decode() if hasattr(e, 'read') else str(e)
-              ai_msg = f'AI 處理失敗 (404 檢查): {error_body}'
+              # 2. 呼叫 Gemini API
+              api_key = os.getenv('GEMINI_KEY')
+              url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}'
+              
+              prompt = f'你是一位開發秘書。請根據以下 Git 提交資訊用繁體中文寫一份簡短日報：\n{log}'
+              payload = {'contents': [{'parts': [{'text': prompt}]}]}
+              
+              try:
+                  req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+                  with urllib.request.urlopen(req) as response:
+                      res = json.loads(response.read().decode())
+                      ai_msg = res['candidates'][0]['content']['parts'][0]['text']
+              except Exception as e:
+                  error_detail = e.read().decode() if hasattr(e, 'read') else str(e)
+                  ai_msg = f'AI 處理失敗: {error_detail}'
 
-          # 3. 發送至 Telegram
-          tg_token = os.getenv('TG_TOKEN')
-          tg_id = os.getenv('TG_ID')
-          final_text = f'🤖 **AI 開發日報**\n\n{ai_msg}'
-          encoded_text = urllib.parse.quote(final_text)
-          
-          tg_url = f'https://api.telegram.org/bot{tg_token}/sendMessage?chat_id={tg_id}&text={encoded_text}&parse_mode=Markdown'
-          urllib.request.urlopen(tg_url)
+              # 3. 發送 TG (切換為 HTML 模式以增加穩定性)
+              tg_token = os.getenv('TG_TOKEN')
+              tg_id = os.getenv('TG_ID')
+              
+              # 格式化訊息，對 AI 內容進行 HTML 轉義防止報錯
+              safe_ai_msg = html.escape(ai_msg)
+              final_text = f'<b>🤖 AI 開發日報</b>\n\n{safe_ai_msg}'
+              
+              try:
+                  tg_url = f'https://api.telegram.org/bot{tg_token}/sendMessage'
+                  tg_data = urllib.parse.urlencode({
+                      'chat_id': tg_id, 
+                      'text': final_text, 
+                      'parse_mode': 'HTML'  # 改用 HTML 模式
+                  }).encode()
+                  
+                  urllib.request.urlopen(tg_url, data=tg_data)
+                  print('Success: Message sent to Telegram!')
+              except Exception as e:
+                  # 如果連 HTML 都失敗，印出詳細原因
+                  error_body = e.read().decode() if hasattr(e, 'read') else str(e)
+                  print(f'Telegram Failed: {error_body}')
+                  sys.exit(1)
+
+          run_task()
           "
