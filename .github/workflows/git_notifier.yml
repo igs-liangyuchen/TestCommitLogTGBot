@@ -1,0 +1,29 @@
+name: Git Push Notification
+
+on:
+  push:
+    branches:
+      - main  # 如果你的主分支叫 master，請改為 master
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Get Commits
+        id: get_commits
+        run: |
+          # 取得最後一次 push 的所有 commit 訊息
+          COMMITS=$(git log -1 --pretty=format:"%s (by %an)")
+          echo "MSG=$COMMITS" >> $GITHUB_ENV
+
+      - name: Send Telegram Message
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "text=🚀 **Git 新上傳通知**%0A%0A📝 內容：${{ env.MSG }}%0A🔗 專案：${{ github.repository }}" \
+            -d "parse_mode=Markdown"
