@@ -1,4 +1,4 @@
-name: Git AI Notifier (Official Gemini 3 Mode)
+name: Git AI Notifier (Final Stable)
 
 on:
   push:
@@ -21,7 +21,7 @@ jobs:
           TG_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python3 -c "
-          import json, os, urllib.request, urllib.parse, subprocess, sys, html
+          import json, os, urllib.request, urllib.parse, subprocess, sys, html, time
 
           def run_task():
               # 1. 取得提交資訊
@@ -30,32 +30,33 @@ jobs:
               except:
                   log = '無提交訊息'
 
-              # 2. 呼叫 Gemini API (參考官方 Quickstart 格式)
+              # 2. 準備呼叫 Gemini API
               api_key = os.getenv('GEMINI_KEY')
               url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent'
+              payload = {'contents': [{'parts': [{'text': f'你是一位開發助理。請用繁體中文總結這次的 Git Commit：{log}'}]}]}
+              headers = {'Content-Type': 'application/json', 'x-goog-api-key': api_key}
               
-              payload = {
-                  'contents': [{
-                      'parts': [{'text': f'你是一位專業助理。請用繁體中文總結這次的 Git Commit：{log}'}]
-                  }]
-              }
-              
-              # 教學建議：將 API Key 放進 Header
-              headers = {
-                  'Content-Type': 'application/json',
-                  'x-goog-api-key': api_key
-              }
-              
-              try:
-                  req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
-                  with urllib.request.urlopen(req) as response:
-                      res = json.loads(response.read().decode())
-                      ai_msg = res['candidates'][0]['content']['parts'][0]['text']
-              except Exception as e:
-                  error_body = e.read().decode() if hasattr(e, 'read') else str(e)
-                  ai_msg = f'AI 處理異常: {error_body}'
+              ai_msg = ''
+              # 加入重試邏輯：嘗試 3 次，每次間隔 5 秒
+              for i in range(3):
+                  try:
+                      print(f'>>> 正在嘗試呼叫 AI (第 {i+1} 次)...')
+                      req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
+                      with urllib.request.urlopen(req) as response:
+                          res = json.loads(response.read().decode())
+                          ai_msg = res['candidates'][0]['content']['parts'][0]['text']
+                          print('AI 生成成功！')
+                          break 
+                  except Exception as e:
+                      error_detail = e.read().decode() if hasattr(e, 'read') else str(e)
+                      if '503' in error_detail or '429' in error_detail:
+                          if i < 2:
+                              print(f'伺服器繁忙，5秒後重試...')
+                              time.sleep(5)
+                              continue
+                      ai_msg = f'AI 處理最終異常: {error_detail}'
 
-              # 3. 發送至 Telegram (HTML 轉義確保穩定)
+              # 3. 發送至 Telegram
               tg_token = os.getenv('TG_TOKEN')
               tg_id = os.getenv('TG_ID')
               safe_ai_msg = html.escape(ai_msg)
@@ -63,16 +64,13 @@ jobs:
               
               try:
                   tg_url = f'https://api.telegram.org/bot{tg_token}/sendMessage'
-                  tg_params = urllib.parse.urlencode({
-                      'chat_id': tg_id, 
-                      'text': final_text, 
-                      'parse_mode': 'HTML'
-                  }).encode()
+                  tg_params = urllib.parse.urlencode({'chat_id': tg_id, 'text': final_text, 'parse_mode': 'HTML'}).encode()
                   urllib.request.urlopen(tg_url, data=tg_params)
-                  print('Success!')
+                  print('Success: Telegram notification sent.')
               except Exception as e:
                   print(f'TG 傳送失敗: {e}')
                   sys.exit(1)
 
-          run_task()
+          if __name__ == '__main__':
+              run_task()
           "
