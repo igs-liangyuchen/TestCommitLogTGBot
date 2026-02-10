@@ -1,4 +1,4 @@
-name: Git AI Notifier (Gemini Debug)
+name: Git AI Notifier (Gemini Fixed)
 
 on:
   push:
@@ -16,44 +16,50 @@ jobs:
 
       - name: AI Summarize with Gemini
         id: gemini_ai
+        env:
+          GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          # 取得最近一次的 git log
+          # 1. 取得提交訊息
           LOG_DATA=$(git log -1 --pretty=format:"%s")
           
-          # 呼叫 API 並將結果存入檔案，方便除錯
-          curl -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${{ secrets.GEMINI_API_KEY }}" \
+          # 2. 呼叫 API 並將結果存入檔案
+          curl -X POST "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$GEMINI_KEY" \
             -H 'Content-Type: application/json' \
-            -d "{
-              \"contents\": [{
-                \"parts\":[{
-                  \"text\": \"請用繁體中文總結這次的 Git Commit：$LOG_DATA\"
-                }]
-              }]
-            }" > response.json
+            -d "{\"contents\": [{\"parts\":[{\"text\": \"請用繁體中文總結這次的 Git Commit 內容：$LOG_DATA\"}]}]}" > response.json
 
-          # 檢查回傳內容 (Debug 用)
-          cat response.json
+          # 3. 使用獨立的 Python 腳本解析，避免 YAML 語法衝突
+          python3 - <<EOF > summary.txt
+          import json
+          try:
+              with open('response.json', 'r') as f:
+                  data = json.load(f)
+              if 'candidates' in data:
+                  content = data['candidates'][0]['content']['parts'][0]['text']
+                  print(content)
+              else:
+                  err = data.get('error', {}).get('message', '未知錯誤')
+                  print(f'AI 報錯: {err}')
+          except Exception as e:
+              print(f'解析出錯: {str(e)}')
+          EOF
 
-          # 使用 Python 解析，並增加錯誤處理
-          SUMMARY=$(python3 -c "
-import json, sys
-try:
-    with open('response.json', 'r') as f:
-        data = json.load(f)
-    if 'candidates' in data:
-        print(data['candidates'][0]['content']['parts'][0]['text'])
-    else:
-        print('AI 解析失敗，錯誤訊息：' + json.dumps(data.get('error', '未知錯誤')))
-except Exception as e:
-    print(f'腳本出錯: {str(e)}')
-")
-          echo "AI_SUMMARY=$SUMMARY" >> $GITHUB_ENV
+          # 4. 將結果存入環境變數
+          echo "AI_RESULT=$(cat summary.txt)" >> $GITHUB_ENV
 
       - name: Send Telegram Message
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # 處理 URL 編碼避免特殊字元造成 curl 失敗
-          encoded_text=$(python3 -c "import urllib.parse; print(urllib.parse.quote(\"🤖 **AI 開發日報**\n\n${{ env.AI_SUMMARY }}\"))")
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d "text=$encoded_text" \
+          # 使用 Python 進行 URL 編碼，確保 Telegram 接收字串安全
+          python3 - <<EOF > payload.txt
+          import urllib.parse, os
+          text = "🤖 **AI 開發日報**\n\n" + os.getenv('AI_RESULT', '無摘要')
+          print(urllib.parse.quote(text))
+          EOF
+          
+          ENCODED_TEXT=$(cat payload.txt)
+          curl -s -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            -d "chat_id=$TG_ID" \
+            -d "text=$ENCODED_TEXT" \
             -d "parse_mode=Markdown"
