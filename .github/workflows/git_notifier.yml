@@ -1,4 +1,4 @@
-name: Git AI Notifier (Stable Version)
+name: Git AI Notifier (Final Fix)
 
 on:
   push:
@@ -20,7 +20,6 @@ jobs:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # 使用單一 Python 腳本完成所有工作，穩定性最高
           python3 -c "
           import json, os, urllib.request, urllib.parse, subprocess
 
@@ -32,9 +31,9 @@ jobs:
               log = '無提交訊息'
               diff = ''
 
-          # 2. 呼叫 Gemini API
+          # 2. 呼叫 Gemini API (修正為 v1beta 穩定路徑)
           api_key = os.getenv('GEMINI_KEY')
-          url = f'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={api_key}'
+          url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}'
           prompt = f'你是一位開發秘書。請根據以下 Git 提交資訊用繁體中文寫一份簡短日報：\n提交內容：{log}\n更動統計：{diff}'
           
           data = {'contents': [{'parts': [{'text': prompt}]}]}
@@ -45,7 +44,9 @@ jobs:
                   res = json.loads(response.read().decode())
                   ai_msg = res['candidates'][0]['content']['parts'][0]['text']
           except Exception as e:
-              ai_msg = f'AI 處理失敗: {str(e)}'
+              # 如果失敗，嘗試抓取回傳的錯誤內容
+              error_body = e.read().decode() if hasattr(e, 'read') else str(e)
+              ai_msg = f'AI 處理失敗 (404 檢查): {error_body}'
 
           # 3. 發送至 Telegram
           tg_token = os.getenv('TG_TOKEN')
