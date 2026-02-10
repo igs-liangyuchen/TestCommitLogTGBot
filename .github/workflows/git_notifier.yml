@@ -1,9 +1,9 @@
-name: Git Push Notification
+name: Git AI Notifier (Gemini)
 
 on:
   push:
     branches:
-      - main  # 如果你的主分支叫 master，請改為 master
+      - main
 
 jobs:
   notify:
@@ -14,16 +14,41 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get Commits
-        id: get_commits
+      - name: Get Git Diff
+        id: git_info
         run: |
-          # 取得最後一次 push 的所有 commit 訊息
-          COMMITS=$(git log -1 --pretty=format:"%s (by %an)")
-          echo "MSG=$COMMITS" >> $GITHUB_ENV
+          # 取得最後一次提交的更動摘要
+          DIFF=$(git log -1 --pretty=format:"提交者: %an%n標題: %s%n內容:%n" && git diff HEAD^ HEAD --stat)
+          echo "DIFF_DATA<<EOF" >> $GITHUB_ENV
+          echo "$DIFF" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: AI Summarize with Gemini
+        id: gemini_ai
+        run: |
+          # 使用 API 呼叫 Gemini
+          RESPONSE=$(curl https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${{ secrets.GEMINI_API_KEY }} \
+            -H 'Content-Type: application/json' \
+            -X POST \
+            -d '{
+              "contents": [{
+                "parts":[{
+                  "text": "你是一位專業的開發秘書。請根據以下 Git 提交內容，用繁體中文整理成一份簡短精鍊的開發日報，包含：1. 做了什麼 2. 影響範圍。內容如下：\n${{ env.DIFF_DATA }}"
+                }]
+              }]
+            }')
+          
+          # 提取回傳的文字內容 (使用 python 簡單解析 JSON)
+          SUMMARY=$(echo $RESPONSE | python3 -c "import sys, json; print(json.load(sys.stdin)['candidates'][0]['content']['parts'][0]['text'])")
+          
+          # 存入環境變數
+          echo "AI_SUMMARY<<EOF" >> $GITHUB_ENV
+          echo "$SUMMARY" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Send Telegram Message
         run: |
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -d "text=🚀 **Git 新上傳通知**%0A%0A📝 內容：${{ env.MSG }}%0A🔗 專案：${{ github.repository }}" \
+            -d "text=🤖 **AI 開發日報**%0A%0A${{ env.AI_SUMMARY }}" \
             -d "parse_mode=Markdown"
