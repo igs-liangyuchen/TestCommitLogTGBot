@@ -1,4 +1,4 @@
-name: Git AI Notifier (Final Stable)
+name: Git AI Code Reviewer (Gemini 3)
 
 on:
   push:
@@ -12,9 +12,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
+          fetch-depth: 2 # 必須至少設為 2 才能比對前一次提交
 
-      - name: Run Script
+      - name: Run Deep AI Review
         env:
           GEMINI_KEY: ${{ secrets.GEMINI_API_KEY }}
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -24,51 +24,58 @@ jobs:
           import json, os, urllib.request, urllib.parse, subprocess, sys, html, time
 
           def run_task():
-              # 1. 取得提交資訊
+              # 1. 取得 Git 詳細變動 (關鍵升級)
               try:
+                  # 取得 commit 訊息
                   log = subprocess.check_output(['git', 'log', '-1', '--pretty=format:%s']).decode('utf-8')
+                  # 取得具體的程式碼差異 (限制長度避免爆量)
+                  diff = subprocess.check_output(['git', 'diff', 'HEAD^', 'HEAD']).decode('utf-8')[:3000] 
+                  # 取得檔案清單統計
+                  stat = subprocess.check_output(['git', 'diff', 'HEAD^', 'HEAD', '--stat']).decode('utf-8')
               except:
-                  log = '無提交訊息'
+                  log, diff, stat = '初次提交', '無差異內容', ''
 
-              # 2. 準備呼叫 Gemini API
+              # 2. 深度提示詞 (Prompt Engineering)
+              prompt = f'''你是一位資深開發工程師。請分析以下 Git 提交內容：
+              【提交訊息】: {log}
+              【檔案清單】: {stat}
+              【程式碼差異 (Diff)】:
+              {diff}
+              
+              請用繁體中文完成：
+              1. 總結這項改動的核心目的。
+              2. 具體指出程式碼中修正了什麼（例如：修復了某個邏輯、優化了效能或更新了介面）。
+              3. 如果有潛在風險或建議，請簡短提醒。'''
+
+              # 3. 呼叫 Gemini 3 (含重試)
               api_key = os.getenv('GEMINI_KEY')
               url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent'
-              payload = {'contents': [{'parts': [{'text': f'你是一位開發助理。請用繁體中文總結這次的 Git Commit：{log}'}]}]}
+              payload = {'contents': [{'parts': [{'text': prompt}]}]}
               headers = {'Content-Type': 'application/json', 'x-goog-api-key': api_key}
               
               ai_msg = ''
-              # 加入重試邏輯：嘗試 3 次，每次間隔 5 秒
               for i in range(3):
                   try:
-                      print(f'>>> 正在嘗試呼叫 AI (第 {i+1} 次)...')
                       req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
                       with urllib.request.urlopen(req) as response:
                           res = json.loads(response.read().decode())
                           ai_msg = res['candidates'][0]['content']['parts'][0]['text']
-                          print('AI 生成成功！')
                           break 
                   except Exception as e:
-                      error_detail = e.read().decode() if hasattr(e, 'read') else str(e)
-                      if '503' in error_detail or '429' in error_detail:
-                          if i < 2:
-                              print(f'伺服器繁忙，5秒後重試...')
-                              time.sleep(5)
-                              continue
-                      ai_msg = f'AI 處理最終異常: {error_detail}'
+                      if i < 2: time.sleep(5); continue
+                      ai_msg = f'AI 深度分析失敗: {str(e)}'
 
-              # 3. 發送至 Telegram
+              # 4. 發送至 Telegram
               tg_token = os.getenv('TG_TOKEN')
               tg_id = os.getenv('TG_ID')
               safe_ai_msg = html.escape(ai_msg)
-              final_text = f'<b>🚀 Gemini 3 開發報告</b>\n\n{safe_ai_msg}'
+              final_text = f'<b>🔍 AI 程式碼深度解析</b>\n\n{safe_ai_msg}'
               
               try:
                   tg_url = f'https://api.telegram.org/bot{tg_token}/sendMessage'
                   tg_params = urllib.parse.urlencode({'chat_id': tg_id, 'text': final_text, 'parse_mode': 'HTML'}).encode()
                   urllib.request.urlopen(tg_url, data=tg_params)
-                  print('Success: Telegram notification sent.')
-              except Exception as e:
-                  print(f'TG 傳送失敗: {e}')
+              except:
                   sys.exit(1)
 
           if __name__ == '__main__':
