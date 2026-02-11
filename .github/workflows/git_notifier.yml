@@ -24,29 +24,31 @@ jobs:
           import json, os, urllib.request, urllib.parse, subprocess, sys, html, time
 
           def run_task():
-              # 1. 取得 Git 詳細變動 (關鍵升級)
+              # 1. 抓取本次改動與歷史紀錄 (fetch-depth 建議設大一點)
               try:
-                  # 取得 commit 訊息
                   log = subprocess.check_output(['git', 'log', '-1', '--pretty=format:%s']).decode('utf-8')
-                  # 取得具體的程式碼差異 (限制長度避免爆量)
-                  diff = subprocess.check_output(['git', 'diff', 'HEAD^', 'HEAD']).decode('utf-8')[:3000] 
-                  # 取得檔案清單統計
-                  stat = subprocess.check_output(['git', 'diff', 'HEAD^', 'HEAD', '--stat']).decode('utf-8')
+                  diff = subprocess.check_output(['git', 'diff', 'HEAD^', 'HEAD']).decode('utf-8')[:2000]
+                  # 抓取最近 5 次的歷史簡述，讓 AI 知道脈絡
+                  history = subprocess.check_output(['git', 'log', '-5', '--pretty=format:%h - %s', 'HEAD^']).decode('utf-8')
               except:
-                  log, diff, stat = '初次提交', '無差異內容', ''
+                  log, diff, history = '初次提交', '無差異', '無歷史紀錄'
 
-              # 2. 深度提示詞 (Prompt Engineering)
-              prompt = f'''你是一位資深程式語言開發工程師。請用簡潔的方式分析並彙整以下 Git 提交內容：
-              【提交訊息】: {log}
-              【檔案清單】: {stat}
+              # 2. 設計影響力分析 Prompt
+              prompt = f'''你是一位資深架構師。請執行【改動影響力分析】：
+              
+              【本次提交內容】: {log}
               【程式碼差異 (Diff)】:
               {diff}
               
+              【過去 5 次歷史紀錄】:
+              {history}
+              
               請用繁體中文完成：
-              1. 請詳閱有改動或新增的的程式碼
-              2. 客觀且具體並簡短的指出程式碼中修正了什麼（例如：修復了某個邏輯、優化了效能或更新了介面）。'''
+              1. **改動摘要**：簡述本次修正。
+              2. **關聯影響評估**：根據歷史紀錄與本次改動的檔案，判斷是否會影響到專案的其他部分？（例如：是否重複修改了同一個敏感模組？）
+              3. **風險等級**：標註 [低/中/高]，若本次改動與過去改動有邏輯衝突，請特別註明。'''
 
-              # 3. 呼叫 Gemini 3 (含重試)
+              # 3. 呼叫 Gemini 3
               api_key = os.getenv('GEMINI_KEY')
               url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent'
               payload = {'contents': [{'parts': [{'text': prompt}]}]}
@@ -68,7 +70,7 @@ jobs:
               tg_token = os.getenv('TG_TOKEN')
               tg_id = os.getenv('TG_ID')
               safe_ai_msg = html.escape(ai_msg)
-              final_text = f'<b>🔍 AI 程式碼深度解析</b>\n\n{safe_ai_msg}'
+              final_text = f'<b>🔍{log}</b>\n\n{safe_ai_msg}'
               
               try:
                   tg_url = f'https://api.telegram.org/bot{tg_token}/sendMessage'
