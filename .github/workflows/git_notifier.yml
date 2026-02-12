@@ -27,7 +27,7 @@ jobs:
               # 1. 抓取本次改動與歷史紀錄 (fetch-depth 建議設大一點)
               try:
                   log = subprocess.check_output(['git', 'log', '-1', '--pretty=format:%s']).decode('utf-8')
-                  diff = subprocess.check_output(['git', 'diff', 'HEAD^', 'HEAD']).decode('utf-8')[:2000]
+                  diff = subprocess.check_output(['git', 'diff', '-U1', 'HEAD^', 'HEAD']).decode('utf-8')[:2000]
                   # 抓取最近 5 次的歷史簡述，讓 AI 知道脈絡
                   history = subprocess.check_output(['git', 'log', '-5', '--pretty=format:%h - %s', 'HEAD^']).decode('utf-8')
               except:
@@ -64,6 +64,8 @@ jobs:
               {diff}
               
               4. **歷史牽涉**：根據過去5次歷史紀錄，點出依據當前最新的改動，是否會影響到既有的程式碼。'''
+              
+              
 
               # 3. 呼叫 Gemini 3
               api_key = os.getenv('GEMINI_KEY')
@@ -82,8 +84,26 @@ jobs:
                   except Exception as e:
                       if i < 2: time.sleep(5); continue
                       ai_msg = f'AI 深度分析失敗: {str(e)}'
+              
+              # 4. 提取 Mermaid 語法並生成圖片連結
+              # 假設 AI 會把語法放在 ```mermaid ... ``` 之間
+              import re
+              mermaid_code = ''
+              match = re.search(r'```mermaid\n(.*?)\n```', ai_msg, re.DOTALL)
+              if match:
+                  mermaid_code = match.group(1).strip()
+              
+              image_url = ''
+              if mermaid_code:
+                  # 使用 mermaid.ink 服務將語法轉為圖片
+                  # 需要先將語法轉為 base64 (或 json 格式)
+                  sample_string_bytes = mermaid_code.encode('ascii')
+                  base64_bytes = base64.b64encode(sample_string_bytes)
+                  base64_string = base64_bytes.decode('ascii')
+                  image_url = f'https://mermaid.ink/img/{base64_string}'
+                  
 
-              # 4. 發送至 Telegram
+              # 5. 發送至 Telegram
               tg_token = os.getenv('TG_TOKEN')
               tg_id = os.getenv('TG_ID')
               safe_ai_msg = html.escape(ai_msg)
