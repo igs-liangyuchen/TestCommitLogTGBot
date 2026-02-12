@@ -48,8 +48,16 @@ jobs:
               
               請依照以下格式回報：
               1. **核心改動**：一句話描述本次 push 的目的。
-              2. **新增函式清單**：(若無則跳過)
-                 - [檔案名稱] `function_name()`: 簡短描述作用。
+              2. **📦 結構變動 (文字版 UML)**：
+                 若有新增 Class 或 Function，請用以下類 UML 格式列出：
+                 ```
+                 [檔案路徑]
+                 class Name {{
+                   + method(param)
+                   - private_member
+                 }}
+                 ```
+                 (若只有新增 Function，請列出：`+ function_name(args)`)
               3. **邏輯調整**：針對既有程式碼的修改，點出關鍵變動點。
 
               Diff 內容：
