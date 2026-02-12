@@ -24,9 +24,16 @@ export class Reel extends Component {
 
     private currentSymbols: number[] = [0, 1, 2]; // Current symbol indices for top, middle, bottom
     private isSpinning: boolean = false;
+	
+	@property(Boolean)
+	public isInitial: boolean = true;
 
     start() {
-        this.initializeSymbols();
+		if(isInitial)
+		{
+			this.initializeSymbols();
+		}
+        
     }
 
     private initializeSymbols() {
