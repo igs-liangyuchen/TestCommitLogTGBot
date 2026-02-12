@@ -1,4 +1,4 @@
-name: Git AI Code Reviewer (Gemini 3 Fixed)
+name: Git AI Code Reviewer (Gemini 3)
 
 on:
   push:
@@ -12,7 +12,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 10 # 增加深度以讀取歷史
+          fetch-depth: 2 # 必須至少設為 2 才能比對前一次提交
 
       - name: Run Deep AI Review
         env:
@@ -21,40 +21,53 @@ jobs:
           TG_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python3 -c "
-          import json, os, urllib.request, urllib.parse, subprocess, sys, html, time, base64, re
+          import json, os, urllib.request, urllib.parse, subprocess, sys, html, time
 
           def run_task():
-              # 1. 抓取 Git 資訊
+              # 1. 抓取本次改動與歷史紀錄 (fetch-depth 建議設大一點)
               try:
                   log = subprocess.check_output(['git', 'log', '-1', '--pretty=format:%s']).decode('utf-8')
                   diff = subprocess.check_output(['git', 'diff', '-U1', 'HEAD^', 'HEAD']).decode('utf-8')[:2000]
+                  # 抓取最近 5 次的歷史簡述，讓 AI 知道脈絡
                   history = subprocess.check_output(['git', 'log', '-5', '--pretty=format:%h - %s', 'HEAD^']).decode('utf-8')
               except:
                   log, diff, history = '初次提交', '無差異', '無歷史紀錄'
 
-              # 2. 建立 Prompt (避免在字串中使用可能引起 Shell 誤判的符號)
-              # 將大括號分開寫，避免 YAML 誤判
-              prompt = f'''你是一位專業代碼審查員。請分析以下 Git Diff 並以精簡格式輸出：
+              # 2. 設計影響力分析 Prompt
               
-              本次提交內容: {log}
               
-              歷史紀錄:
-              {history}
-
-              請依照以下格式回報：
-              1. **核心改動**：描述本次 push 的目的。
-              2. **📦 結構變動 (UML)**：
-                 若有新增類別或函式，請用 mermaid classDiagram 語法標註在 ```mermaid 代碼塊中。
-              3. **邏輯調整**：點出關鍵變動點。
-              4. **歷史牽涉**：分析是否影響既有程式碼。
-
-              Diff 內容:
+              
+              prompt = f'''你是一位專業的代碼審查員。請分析以下 Git Diff 並以【精簡格式】輸出：
+              
+              【本次提交內容】: {log}
+              【程式碼差異 (Diff)】:
               {diff}
-              '''
+              
+              【過去 5 次歷史紀錄】:
+              {history}
+              
+              請依照以下格式回報：
+              1. **核心改動**：一句話描述本次 push 的目的。
+              2. **📦 結構變動 (文字版 UML)**：
+                 若有新增 Class 或 Function，請用以下類 UML 格式列出：
+                 ```
+                 [檔案路徑]
+                 class Name {{
+                   + method(param)
+                   - private_member
+                 }}
+                 ```
+                 (若只有新增 Function，請列出：`+ function_name(args)`)
+              3. **邏輯調整**：針對既有程式碼的修改，點出關鍵變動點。
+
+              Diff 內容：
+              {diff}
+              
+              4. **歷史牽涉**：根據過去5次歷史紀錄，點出依據當前最新的改動，是否會影響到既有的程式碼。'''
 
               # 3. 呼叫 Gemini 3
               api_key = os.getenv('GEMINI_KEY')
-              url = '[https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent](https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent)'
+              url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent'
               payload = {'contents': [{'parts': [{'text': prompt}]}]}
               headers = {'Content-Type': 'application/json', 'x-goog-api-key': api_key}
               
@@ -68,50 +81,20 @@ jobs:
                           break 
                   except Exception as e:
                       if i < 2: time.sleep(5); continue
-                      ai_msg = f'AI 分析失敗: {str(e)}'
+                      ai_msg = f'AI 深度分析失敗: {str(e)}'
 
-              # 4. 提取 Mermaid 圖片
-              image_url = ''
-              match = re.search(r'```mermaid\n(.*?)\n```', ai_msg, re.DOTALL)
-              if match:
-                  try:
-                      mermaid_code = match.group(1).strip()
-                      # Mermaid.ink 編碼
-                      base64_string = base64.b64encode(mermaid_code.encode('utf-8')).decode('ascii')
-                      image_url = f'[https://mermaid.ink/img/](https://mermaid.ink/img/){base64_string}'
-                  except:
-                      pass
-
-              # 5. 發送至 Telegram
+              # 4. 發送至 Telegram
               tg_token = os.getenv('TG_TOKEN')
               tg_id = os.getenv('TG_ID')
-              
-              # 清理 Markdown 代碼塊，避免 HTML 解析報錯
-              clean_msg = html.escape(ai_msg).replace('```', '---')
-              final_text = f'<b>🔍 {html.escape(log)}</b>\n\n{clean_msg}'
+              safe_ai_msg = html.escape(ai_msg)
+              final_text = f'<b>🔍{log}</b>\n\n{safe_ai_msg}'
               
               try:
-                  if image_url:
-                      # 發送照片模式
-                      tg_url = f'https://api.telegram.org/bot{tg_token}/sendPhoto'
-                      data = urllib.parse.urlencode({
-                          'chat_id': tg_id,
-                          'photo': image_url,
-                          'caption': final_text[:1024], # Telegram caption 長度限制
-                          'parse_mode': 'HTML'
-                      }).encode()
-                  else:
-                      # 純文字模式
-                      tg_url = f'https://api.telegram.org/bot{tg_token}/sendMessage'
-                      data = urllib.parse.urlencode({
-                          'chat_id': tg_id,
-                          'text': final_text,
-                          'parse_mode': 'HTML'
-                      }).encode()
-                  
-                  urllib.request.urlopen(tg_url, data=data)
-              except Exception as e:
-                  print(f'傳送失敗: {e}')
+                  tg_url = f'https://api.telegram.org/bot{tg_token}/sendMessage'
+                  tg_params = urllib.parse.urlencode({'chat_id': tg_id, 'text': final_text, 'parse_mode': 'HTML'}).encode()
+                  urllib.request.urlopen(tg_url, data=tg_params)
+              except:
+                  sys.exit(1)
 
           if __name__ == '__main__':
               run_task()
